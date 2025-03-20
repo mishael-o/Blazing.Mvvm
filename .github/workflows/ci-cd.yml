@@ -58,12 +58,12 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
       - name: Build solution
-        run: dotnet build --no-restore -c $configuration
+        run: dotnet build --no-restore -c $env:configuration
       - name: Run unit tests
         # run: dotnet test --no-build -c $configuration --collect:"XPlat Code Coverage;Format=cobertura" --filter "FullyQualifiedName~UnitTests" --results-directory ${{ env.coverageReportPath }} -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Blazing.Mvvm.Sample*"
-        run: dotnet test --no-build -c $configuration --collect:"XPlat Code Coverage;Format=cobertura" --filter "FullyQualifiedName~Tests" --results-directory ${{ env.coverageReportPath }} -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Blazing.Mvvm.Sample*"
+        run: dotnet test --no-build -c $env:configuration --collect:"XPlat Code Coverage;Format=cobertura" --filter "FullyQualifiedName~Tests" --results-directory ${{ env.coverageReportPath }} -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Blazing.Mvvm.Sample*"
       - name: Run integration tests
-        run: dotnet test --no-build -c $configuration --filter "FullyQualifiedName~IntegrationTests"
+        run: dotnet test --no-build -c $env:configuration --filter "FullyQualifiedName~IntegrationTests"
       - name: Install dotnet-coverage
         run: dotnet tool install --global dotnet-coverage
       - name: Merge coverage reports
