@@ -1,0 +1,214 @@
+name: Continuous integration and delivery
+
+on:
+  push:
+    branches: ["main", "updates"]
+    paths:
+      - "src/**"
+  pull_request:
+    branches: ["main", "updates"]
+  workflow_dispatch:
+    inputs:
+      publish_packages:
+        description: "Publish Packages?"
+        default: false
+        required: false
+        type: boolean
+      publish_docs:
+        description: "Publish Docs?"
+        default: false
+        required: false
+        type: boolean
+      create_sync_pr:
+        description: "Create sync pull request?"
+        default: false
+        required: false
+        type: boolean
+
+env:
+  configuration: release
+  packagePath: ${{ github.workspace }}/packed-nuget
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    env:
+      coverageReportPath: ${{ github.workspace }}/coverage-reports/
+      mergedCoverageReportFileName: merged-coverage.xml
+    outputs:
+      package_version: ${{ steps.getversion.outputs.package_version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.x
+            8.x
+      - name: Install MAUI workload
+        run: dotnet workload install maui
+      - name: Restore dependencies
+        run: dotnet restore
+      - name: Build solution
+        run: dotnet build --no-restore -c $configuration
+      - name: Run unit tests
+        # run: dotnet test --no-build -c $configuration --collect:"XPlat Code Coverage;Format=cobertura" --filter "FullyQualifiedName~UnitTests" --results-directory ${{ env.coverageReportPath }} -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Blazing.Mvvm.Sample*"
+        run: dotnet test --no-build -c $configuration --collect:"XPlat Code Coverage;Format=cobertura" --filter "FullyQualifiedName~Tests" --results-directory ${{ env.coverageReportPath }} -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Blazing.Mvvm.Sample*"
+      - name: Run integration tests
+        run: dotnet test --no-build -c $configuration --filter "FullyQualifiedName~IntegrationTests"
+      - name: Install dotnet-coverage
+        run: dotnet tool install --global dotnet-coverage
+      - name: Merge coverage reports
+        run: dotnet-coverage merge ${{ env.coverageReportPath }}**/*.xml -f cobertura -o ${{ env.coverageReportPath }}${{ env.mergedCoverageReportFileName }}
+      # - name: Codecov
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     directory: ${{ env.coverageReportPath }}
+      #     files: ${{ env.mergedCoverageReportFileName }}
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      # - name: Get version
+      #   id: getversion
+      #   run: |
+      #     nugetVersion=${{ env.GitBuildVersionSimple }}
+
+      #     if ${{ github.ref_name == 'develop' }};
+      #     then
+      #       nugetVersion+="-beta"
+      #     fi
+
+      #     echo "package_version=$nugetVersion" >> $GITHUB_OUTPUT
+      - name: Create nuget packages
+        if: ${{ inputs.publish_packages == true }}
+        run: dotnet pack --no-build -o $packagePath -c $configuration
+      - name: Upload artifacts
+        if: ${{ inputs.publish_packages == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: ${{ env.packagePath }}
+          retention-days: 7
+
+  # publish-packages:
+  #   if: ${{ contains(fromJson('["main", "develop"]'), github.ref_name) && inputs.publish_packages == true }}
+  #   name: Publish Packages
+  #   needs: [build]
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: src
+
+  #   steps:
+  #     - name: Check out code
+  #       uses: actions/checkout@v4
+  #     - name: Download artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: artifacts
+  #         path: ${{ env.packagePath }}
+  #     - name: Push packages
+  #       run: dotnet nuget push  ${{ env.packagePath }}/*.nupkg --api-key ${{ secrets.NUGET_KEY }} --source https://api.nuget.org/v3/index.json
+  #     - name: Create Release Documentation
+  #       if: ${{ success() }}
+  #       run: |
+  #         if ${{ github.ref_name == 'main' }};
+  #         then
+  #           gh release create 'v${{ needs.build.outputs.package_version }}' --title 'Release ${{ needs.build.outputs.package_version }}' --generate-notes
+  #         else
+  #           gh release create 'v${{ needs.build.outputs.package_version }}' --target ${{ github.ref_name }} --title 'Release ${{ needs.build.outputs.package_version }}' --generate-notes --prerelease
+  #         fi
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # publish-docs:
+  #   if: ${{ github.ref_name == 'main' && inputs.publish_docs == true }}
+  #   name: Publish Docs
+  #   needs: [build]
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: docs/github-pages
+  #   env:
+  #     docfx_version: 2.78.2
+  #     siteSubpath: ${{ github.event.repository.name }}
+
+  #   # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
+  #   permissions:
+  #     pages: write
+  #     id-token: write
+
+  #   # Allow only one concurrent deployment, skipping runs queued between the run in progress and the latest queued.
+  #   # However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+  #   concurrency:
+  #     group: "pages"
+  #     cancel-in-progress: false
+
+  #   # Deploy to the github-pages environment
+  #   environment:
+  #     name: github-pages
+  #     url: ${{ steps.deployment.outputs.page_url }}
+
+  #   steps:
+  #     - name: Check out code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #     - name: Setup .NET
+  #       uses: actions/setup-dotnet@v4
+  #       with:
+  #         dotnet-version: 9.x
+  #     - name: Install DocFx
+  #       run: dotnet tool update -g docfx --version ${{ env.docfx_version }}
+  #     - name: Generate Xrefmap
+  #       run: _scripts/generate-xrefmap.sh ${{ env.siteSubpath }}
+  #     - name: Set Google Analytics Id
+  #       run: jq --arg gaId "${{ vars.GA_TAG_ID }}" '.build.globalMetadata._googleAnalyticsTagId = $gaId' docfx.json > temp.json && mv temp.json docfx.json
+  #     - name: Generate Metadata
+  #       run: _scripts/generate-metadata.sh
+  #     - name: DocFx Build
+  #       run: docfx build docfx.json
+  #     - name: Upload Doc Artifacts
+  #       uses: actions/upload-pages-artifact@v3
+  #       with:
+  #         path: ${{ github.workspace }}/docs/github-pages/_site
+  #     - name: Deploy to GitHub Pages
+  #       id: deployment
+  #       uses: actions/deploy-pages@v4
+  
+  # create-sync-pr:
+  #   if: ${{ github.ref_name == 'main' && inputs.create_sync_pr == true }}
+  #   name: Create Sync PR
+  #   needs: [build]
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Check out code
+  #       uses: actions/checkout@v4
+  #     - name: Create Sync PR
+  #       run: |
+  #         set +e
+  #         PR_EXISTS=$(gh pr list --base develop --head main --state open --json number --jq '.[0]')
+  #         echo "Existing PR number: $PR_EXISTS"
+
+  #         if [ -z "$PR_EXISTS" ];
+  #         then
+  #           PR_URL=$(gh pr create --base develop --head main --title "main to develop sync" --body "This is an automated PR to sync main into develop" --label "ignore-for-release" 2>&1)
+  #           CREATE_EXIT_CODE=$?        
+  #           echo "Response: $PR_URL - Exit Code: $CREATE_EXIT_CODE"
+          
+  #           if [[ $CREATE_EXIT_CODE -eq 0 ]];
+  #           then
+  #             echo "Created PR: $PR_URL"
+  #             gh pr merge --auto --merge "$PR_URL"
+  #           fi
+
+  #           exit 0;
+  #         fi
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
